@@ -1,0 +1,13 @@
+[package]
+name = "djvu_nav"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+crossterm = "0.26.1"
+nom = "7.1.3"
+ratatui = "0.20.1"
+tui-input = "0.7.1"
+unicode-width = "0.1.10"
