@@ -4,7 +4,7 @@ use ratatui::{backend::Backend, Frame, style::{Style, Color}, Terminal};
 
 use crate::{
     nav::{Nav, NavNode, BookmarkLink}, 
-    tree_widget::{TreeState, Tree, TreeItem}, djvu::{NavReadingError, get_nav_from_djvu, write_nav_to_djvu}
+    tree_widget::{TreeState, Tree, TreeItem}, djvu::{NavReadingError, get_nav_from_djvu, embed_nav_in_djvu_file}
 };
 
 pub const TEMP_FOLDER: &str = "/home/arthur/.cache/djvu_nav";
@@ -192,7 +192,7 @@ impl App {
     }
 
     fn write(&self) -> Result<(), NavReadingError> {
-        write_nav_to_djvu(&self.filename, &self.nav)?;
+        embed_nav_in_djvu_file(&self.filename, &self.nav)?;
         Ok(())
     }
 }
