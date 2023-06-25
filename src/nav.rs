@@ -1,5 +1,13 @@
 use std::{fmt::Display, ops::{Index, IndexMut}};
 
+use ratatui::{
+    backend::Backend,
+    style::{Style, Color},
+    Frame,
+};
+
+use crate::tree_widget::{TreeState, TreeItem, Tree};
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BookmarkLink {
     PageNumber(u32),
@@ -74,6 +82,7 @@ impl NavNode {
             self.children[id[0]].get_node_from_id(&id[1..])
         }
     }
+
     fn get_node_from_id_mut(&mut self, id: &[usize]) -> &mut NavNode {
         if id.is_empty() {
             self
@@ -85,6 +94,19 @@ impl NavNode {
             self.children[id[0]].get_node_from_id_mut(&id[1..])
         }
     }
+
+    fn get_tree(&self) -> TreeItem {
+        if self.children.is_empty() {
+            TreeItem::new_leaf(self.string.as_str())
+        }
+        else {
+            let children: Vec<_> = self.children.iter()
+                .map(|n| n.get_tree())
+                .collect();
+
+            TreeItem::new(self.string.as_str(), children)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +115,7 @@ pub struct Nav {
 }
 
 impl Nav {
+    /// Return a `String` describing `self` in a way understandable by `djvused`.
     pub fn to_djvu(&self) -> String {
         let mut s = String::from("(bookmarks");
         for node in &self.nodes {
@@ -100,6 +123,27 @@ impl Nav {
         }
         s.push_str(" )\n");
         s
+    }
+
+    /// Render `self` to the `Frame` `f`, as a tree. Use `state` for persistence of open and
+    /// selected nodes.
+    pub fn ui<B: Backend>(&self, f: &mut Frame<B>, state: &mut TreeState) {
+        let tree = Tree::new(self.get_tree())
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::LightGreen)
+            )
+            .highlight_symbol("> ");
+        f.render_stateful_widget(tree, f.size(), state);
+    }
+
+    /// Return a `Vec` representing the zeroth level nodes of `self`, as `TreeItem` for the tree
+    /// widget representation.
+    pub fn get_tree(&self) -> Vec<TreeItem> {
+        self.nodes.iter()
+                .map(|node| node.get_tree())
+                .collect()
     }
 }
 

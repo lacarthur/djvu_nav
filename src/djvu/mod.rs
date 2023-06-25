@@ -3,6 +3,7 @@ use std::{
     fs::File, 
     io::{BufWriter, Write},
 };
+
 use crate::{
     nav::Nav,
     app::{TEMP_FOLDER, TEMP_FILE_NAME},

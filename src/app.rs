@@ -1,16 +1,28 @@
-use std::{fs::{self, File}, io::{BufWriter, Write, BufReader, BufRead, self}, process::Command, time::{Duration, Instant}};
-use crossterm::{event::{self, Event, KeyEvent, KeyCode, EnableMouseCapture}, terminal::{enable_raw_mode, EnterAlternateScreen}, execute};
-use ratatui::{backend::Backend, Frame, style::{Style, Color}, Terminal};
+use std::{
+    fs::{self, File}, 
+    io::{BufWriter, Write, BufReader, BufRead, self, Stdout}, 
+    process::Command, 
+    time::{Duration, Instant}
+};
+
+use crossterm::{
+    event::{self, Event, KeyEvent, KeyCode, EnableMouseCapture}, 
+    terminal::{enable_raw_mode, EnterAlternateScreen, disable_raw_mode, LeaveAlternateScreen}, 
+    execute
+};
+
+use ratatui::{backend::CrosstermBackend,  Terminal};
 
 use crate::{
-    nav::{Nav, NavNode, BookmarkLink}, 
-    tree_widget::{TreeState, Tree, TreeItem}, djvu::{NavReadingError, get_nav_from_djvu, embed_nav_in_djvu_file}
+    nav::{Nav, BookmarkLink}, 
+    tree_widget::TreeState, djvu::{NavReadingError, get_nav_from_djvu, embed_nav_in_djvu_file}
 };
 
 pub const TEMP_FOLDER: &str = "/home/arthur/.cache/djvu_nav";
 pub const TEMP_FILE_NAME: &str = "tempfile";
 
 pub struct App {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
     filename: String,
     nav: Nav,
     tree_state: TreeState,
@@ -30,27 +42,20 @@ pub enum AppState {
     Navigating,
     RunningOtherCommand,
 }
-fn get_tree_from_nav(nav: &Nav) -> Vec<TreeItem> {
-    nav.nodes.iter()
-        .map(|node| get_tree_from_nav_node(node))
-        .collect()
-}
 
-fn get_tree_from_nav_node(node: &NavNode) -> TreeItem {
-    if node.children.is_empty() {
-        TreeItem::new_leaf(node.string.as_str())
-    }
-    else {
-        let children: Vec<_> = node.children.iter()
-            .map(|n| get_tree_from_nav_node(n))
-            .collect();
-
-        TreeItem::new(node.string.as_str(), children)
-    }
+fn prepare_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, io::Error> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
 }
 
 impl App {
     pub fn new(filename: &str) -> Result<Self, AppLifetimeError> {
+        let terminal = prepare_terminal().map_err(|e| AppLifetimeError::TerminalIOError(e))?;
+
         let nav = get_nav_from_djvu(filename)
             .map_err(|e| AppLifetimeError::NavReadingError(e))?;
 
@@ -63,6 +68,7 @@ impl App {
         let state = AppState::Navigating;
 
         Ok(Self {
+            terminal,
             filename: String::from(filename),
             nav,
             tree_state,
@@ -70,32 +76,24 @@ impl App {
         })
     }
 
-    pub fn ui<B: Backend>(&mut self, f: &mut Frame<B>) {
-        let tree = Tree::new(get_tree_from_nav(&self.nav))
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::LightGreen)
-            )
-            .highlight_symbol("> ");
-        f.render_stateful_widget(tree, f.size(), &mut self.tree_state);
-    }
-
-    pub fn handle_input<B : Backend + std::io::Write>(&mut self, key: KeyEvent, terminal: &mut Terminal<B>) -> Result<(), AppLifetimeError> {
+    pub fn handle_input(
+        &mut self, 
+        key: KeyEvent, 
+    ) -> Result<(), AppLifetimeError> {
         match key.code {
             KeyCode::Char('q') => self.state = AppState::Quitting,
             KeyCode::Char('h') => self.move_left(),
             KeyCode::Char('j') => self.move_down(),
             KeyCode::Char('k') => self.move_up(),
             KeyCode::Char('l') => self.move_right(),
-            KeyCode::Char('a') => self.edit_currently_selected(terminal).unwrap(),
+            KeyCode::Char('a') => self.edit_currently_selected().unwrap(),
             KeyCode::Char('w') => self.write().map_err(|e| AppLifetimeError::NavReadingError(e))?,
             _ => (),
         }
         Ok(())
     }
 
-    fn edit_currently_selected<B : Backend + std::io::Write>(&mut self, terminal: &mut Terminal<B>) -> Result<(), AppLifetimeError> {
+    fn edit_currently_selected(&mut self) -> Result<(), AppLifetimeError> {
         // Create temp file with data in it
         fs::create_dir_all(TEMP_FOLDER).map_err(|e| AppLifetimeError::TerminalIOError(e))?;
         let temp_filename = format!("{}/{}", TEMP_FOLDER, TEMP_FILE_NAME);
@@ -120,10 +118,11 @@ impl App {
 
         command.wait().expect("Error waiting nvim");
         self.state = AppState::Navigating;
+
         enable_raw_mode().map_err(|e| AppLifetimeError::TerminalIOError(e))?;
-        execute!(terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)
+        execute!(self.terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)
             .map_err(|e| AppLifetimeError::TerminalIOError(e))?;
-        terminal.clear().map_err(|e| AppLifetimeError::TerminalIOError(e))?;
+        self.terminal.clear().map_err(|e| AppLifetimeError::TerminalIOError(e))?;
         // Read content of file and change thing
 
         let tempfile = File::open(&temp_filename).map_err(|e| AppLifetimeError::TempFileIOError(e))?;
@@ -139,12 +138,12 @@ impl App {
     }
 
     pub fn move_up(&mut self) {
-        let items = get_tree_from_nav(&self.nav);
+        let items = self.nav.get_tree();
         self.tree_state.key_up(&items);
     }
 
     pub fn move_down(&mut self) {
-        let items = get_tree_from_nav(&self.nav);
+        let items = self.nav.get_tree();
         self.tree_state.key_down(&items);
     }
 
@@ -160,9 +159,8 @@ impl App {
         self.tree_state.key_right();
     }
 
-    pub fn run<B : Backend + std::io::Write>(
+    pub fn run(
         &mut self,
-        terminal: &mut Terminal<B>,
         tick_rate: Duration,
     ) -> Result<(), AppLifetimeError> {
         let mut last_tick = Instant::now();
@@ -171,8 +169,8 @@ impl App {
                 return Ok(());
             }
             if self.state == AppState::Navigating {
-                terminal.draw(|f| {
-                    self.ui(f)
+                self.terminal.draw(|f| {
+                    self.nav.ui(f, &mut self.tree_state)
                 })
                 .map_err(|e| AppLifetimeError::TerminalIOError(e))?;
 
@@ -181,7 +179,7 @@ impl App {
                     .unwrap_or_else(|| Duration::from_secs(0));
                 if event::poll(timeout).map_err(|e| AppLifetimeError::TerminalIOError(e))? {
                     if let Event::Key(key) = event::read().map_err(|e| AppLifetimeError::TerminalIOError(e))? {
-                        self.handle_input(key, terminal)?;
+                        self.handle_input(key)?;
                     }
                 }
             }
@@ -194,5 +192,13 @@ impl App {
     fn write(&self) -> Result<(), NavReadingError> {
         embed_nav_in_djvu_file(&self.filename, &self.nav)?;
         Ok(())
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        disable_raw_mode().unwrap();
+        execute!(self.terminal.backend_mut(), LeaveAlternateScreen).unwrap();
+        self.terminal.show_cursor().unwrap();
     }
 }
