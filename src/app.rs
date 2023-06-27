@@ -11,15 +11,18 @@ use crossterm::{
     execute
 };
 
-use ratatui::{backend::CrosstermBackend,  Terminal};
+use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::{
     nav::{Nav, BookmarkLink}, 
-    tree_widget::TreeState, djvu::{NavReadingError, get_nav_from_djvu, embed_nav_in_djvu_file}
+    tree_widget::TreeState, 
+    djvu::{NavReadingError, get_nav_from_djvu, embed_nav_in_djvu_file}
 };
 
 const TEMP_FOLDER: &str = "/home/arthur/.cache/djvu_nav";
 const TEMP_FILE_NAME: &str = "tempfile";
+
+const EDITOR: &str = "nvim";
 
 pub fn get_temp_file_name() -> String {
     format!("{}/{}", TEMP_FOLDER, TEMP_FILE_NAME)
@@ -36,6 +39,7 @@ pub struct App {
 #[derive(Debug)]
 pub enum AppLifetimeError {
     NavReadingError(NavReadingError),
+    ExternalProgramError(io::Error),
     TerminalIOError(io::Error),
     TempFileIOError(io::Error),
 }
@@ -90,7 +94,7 @@ impl App {
             KeyCode::Char('j') => self.move_down(),
             KeyCode::Char('k') => self.move_up(),
             KeyCode::Char('l') => self.move_right(),
-            KeyCode::Char('a') => self.edit_currently_selected().unwrap(),
+            KeyCode::Char('a') => self.edit_currently_selected()?,
             KeyCode::Char('w') => self.write().map_err(|e| AppLifetimeError::NavReadingError(e))?,
             _ => (),
         }
@@ -115,19 +119,18 @@ impl App {
 
         // Edit file with EDITOR
         self.state = AppState::RunningOtherCommand;
-        let mut command = Command::new("nvim")
+        let mut command = Command::new(EDITOR)
             .arg(&temp_filename)
             .spawn()
-            .expect("Error spawning nvim");
+            .map_err(|e| AppLifetimeError::ExternalProgramError(e))?;
 
-        command.wait().expect("Error waiting nvim");
+        command.wait().map_err(|e| AppLifetimeError::ExternalProgramError(e))?;
         self.state = AppState::Navigating;
 
         enable_raw_mode().map_err(|e| AppLifetimeError::TerminalIOError(e))?;
         execute!(self.terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)
             .map_err(|e| AppLifetimeError::TerminalIOError(e))?;
         self.terminal.clear().map_err(|e| AppLifetimeError::TerminalIOError(e))?;
-        // Read content of file and change thing
 
         let tempfile = File::open(&temp_filename).map_err(|e| AppLifetimeError::TempFileIOError(e))?;
         let reader = BufReader::new(tempfile);
