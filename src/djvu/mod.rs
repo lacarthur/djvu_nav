@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     nav::Nav,
-    app::{TEMP_FOLDER, TEMP_FILE_NAME},
+    app::get_temp_file_name,
 };
 
 pub mod parser;
@@ -48,7 +48,7 @@ fn write_nav_to_temp_file(filename: &str, nav: &Nav) -> Result<(), std::io::Erro
 
 /// Uses `djvused` to set the outline of the file `filename` to `nav`.
 pub fn embed_nav_in_djvu_file(filename: &str, nav: &Nav) -> Result<(), NavReadingError> {
-    let temp_file_name = format!("{}/{}", TEMP_FOLDER, TEMP_FILE_NAME);
+    let temp_file_name = get_temp_file_name();
     write_nav_to_temp_file(&temp_file_name, nav).map_err(|e| NavReadingError::IOError(e))?;
 
     let sed_command = format!("set-outline {}", &temp_file_name);

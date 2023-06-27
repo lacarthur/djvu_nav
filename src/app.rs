@@ -18,8 +18,12 @@ use crate::{
     tree_widget::TreeState, djvu::{NavReadingError, get_nav_from_djvu, embed_nav_in_djvu_file}
 };
 
-pub const TEMP_FOLDER: &str = "/home/arthur/.cache/djvu_nav";
-pub const TEMP_FILE_NAME: &str = "tempfile";
+const TEMP_FOLDER: &str = "/home/arthur/.cache/djvu_nav";
+const TEMP_FILE_NAME: &str = "tempfile";
+
+pub fn get_temp_file_name() -> String {
+    format!("{}/{}", TEMP_FOLDER, TEMP_FILE_NAME)
+}
 
 pub struct App {
     terminal: Terminal<CrosstermBackend<Stdout>>,
