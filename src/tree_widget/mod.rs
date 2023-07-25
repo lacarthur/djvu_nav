@@ -12,19 +12,10 @@ use unicode_width::UnicodeWidthStr;
 mod flatten;
 mod identifier;
 
-pub use crate::tree_widget::flatten::{flatten, Flattened};
-pub use crate::tree_widget::identifier::{
-    get_without_leaf as get_identifier_without_leaf, TreeIdentifier, TreeIdentifierVec,
-};
+pub trait TreeView {
+    fn num_children(&self, index: TreeIdentifier) -> usize;
+}
 
-/// Keeps the state of what is currently selected and what was opened in a [`Tree`]
-///
-/// # Example
-///
-/// ```
-/// # use tui_tree_widget::TreeState;
-/// let mut state = TreeState::default();
-/// ```
 #[derive(Debug, Default, Clone)]
 pub struct TreeState {
     offset: usize,
@@ -40,12 +31,24 @@ impl TreeState {
 
     #[must_use]
     pub fn get_all_opened(&self) -> Vec<TreeIdentifierVec> {
+        // Maybe I need to change the signature of this, because sometimes we may not need to
+        // clone, so we could return a `Vec<TreeIdentifier<'a>>` where &self outlives 'a. Cloning
+        // could be left to the user, if necessary.
         self.opened.iter().cloned().collect()
     }
 
     #[must_use]
-    pub fn selected(&self) -> Vec<usize> {
-        self.selected.clone()
+    pub fn is_open(&self, identifier: TreeIdentifier) -> bool {
+        if identifier.is_empty() {
+            true
+        } else {
+            self.opened.contains(identifier)
+        }
+    }
+
+    #[must_use]
+    pub fn selected(&self) -> TreeIdentifier {
+        &self.selected
     }
 
     pub fn select<I>(&mut self, identifier: I)
@@ -53,122 +56,123 @@ impl TreeState {
         I: Into<Vec<usize>>,
     {
         self.selected = identifier.into();
-
-        // TODO: ListState does this. Is this relevant?
-        if self.selected.is_empty() {
-            self.offset = 0;
-        }
     }
 
-    /// Open a tree node.
-    /// Returns `true` if the node was closed and has been opened.
-    /// Returns `false` if the node was already open.
-    pub fn open(&mut self, identifier: TreeIdentifierVec) -> bool {
+    pub fn open(&mut self, identifier: TreeIdentifier) -> bool {
         if identifier.is_empty() {
             false
         } else {
-            self.opened.insert(identifier)
+            // potentially unnecessary clone if `identifier` could have been moved.
+            self.opened.insert(identifier.into())
         }
     }
 
-    /// Close a tree node.
-    /// Returns `true` if the node was open and has been closed.
-    /// Returns `false` if the node was already closed.
     pub fn close(&mut self, identifier: TreeIdentifier) -> bool {
         self.opened.remove(identifier)
     }
 
-    /// Toggles a tree node.
-    /// If the node is in opened then it calls `close()`. Otherwise it calls `open()`.
-    pub fn toggle(&mut self, identifier: TreeIdentifierVec) {
-        if self.opened.contains(&identifier) {
-            self.close(&identifier);
-        } else {
+    pub fn toggle(&mut self, identifier: TreeIdentifier) {
+        if !self.close(identifier) {
             self.open(identifier);
         }
     }
 
-    /// Toggles the currently selected tree node.
-    /// See also [`toggle`](TreeState::toggle)
     pub fn toggle_selected(&mut self) {
-        self.toggle(self.selected());
+        let selected = self.selected().to_owned();
+        self.toggle(&selected);
     }
 
     pub fn close_all(&mut self) {
         self.opened.clear();
     }
 
-    /// Select the first node.
     pub fn select_first(&mut self) {
         self.select(vec![0]);
     }
 
-    /// Select the last node.
-    pub fn select_last(&mut self, items: &[TreeItem]) {
-        let visible = flatten(&self.get_all_opened(), items);
-        let new_identifier = visible
-            .last()
-            .map(|o| o.identifier.clone())
-            .unwrap_or_default();
-        self.select(new_identifier);
+    pub fn select_last<T>(&mut self, tree: &T)
+    where
+        T: TreeView
+    {
+        let mut index = vec![];
+        while self.is_open(&index) && tree.num_children(&index) > 0 {
+            let next_value = tree.num_children(&index) - 1;
+            index.push(next_value)
+        }
+        self.selected = index;
     }
 
-    /// Handles the up arrow key.
-    /// Moves up in the current depth or to its parent.
-    pub fn key_up(&mut self, items: &[TreeItem]) {
-        let visible = flatten(&self.get_all_opened(), items);
-        let current_identifier = self.selected();
-        let current_index = visible
-            .iter()
-            .position(|o| o.identifier == current_identifier);
-        let new_index = current_index.map_or(0, |current_index| {
-            current_index.saturating_sub(1).min(visible.len() - 1)
-        });
-        let new_identifier = visible
-            .get(new_index)
-            .map(|o| o.identifier.clone())
-            .unwrap_or_default();
-        self.select(new_identifier);
-    }
-
-    /// Handles the down arrow key.
-    /// Moves down in the current depth or into a child node.
-    pub fn key_down(&mut self, items: &[TreeItem]) {
-        let visible = flatten(&self.get_all_opened(), items);
-        let current_identifier = self.selected();
-        let current_index = visible
-            .iter()
-            .position(|o| o.identifier == current_identifier);
-        let new_index = current_index.map_or(0, |current_index| {
-            current_index.saturating_add(1).min(visible.len() - 1)
-        });
-        let new_identifier = visible
-            .get(new_index)
-            .map(|o| o.identifier.clone())
-            .unwrap_or_default();
-        self.select(new_identifier);
-    }
-
-    /// Handles the left arrow key.
-    /// Closes the currently selected or moves to its parent.
-    pub fn key_left(&mut self) {
-        let selected = self.selected();
-        if !self.close(&selected) {
-            let (head, _) = get_identifier_without_leaf(&selected);
-            self.select(head);
+    pub fn key_up<T>(&mut self, tree: &T)
+    where
+        T: TreeView
+    {
+        if self.selected.is_empty() {
+            return;
+        }
+        if *self.selected.last().unwrap() == 0 {
+            self.selected.pop();
+        } else {
+            let mut index = self.selected.clone();
+            *index.last_mut().unwrap() -= 1;
+            while self.is_open(&index) && tree.num_children(&index) > 0 {
+                let next_value = tree.num_children(&index) - 1;
+                index.push(next_value);
+            }
+            self.selected = index;
         }
     }
 
-    /// Handles the right arrow key.
-    /// Opens the currently selected.
+    pub fn key_down<T>(&mut self, tree: &T)
+    where
+        T: TreeView
+    {
+        if self.selected.is_empty() {
+            self.select_first();
+            return;
+        }
+
+        if self.is_open(&self.selected) && tree.num_children(&self.selected) > 0 {
+            self.selected.push(0);
+        } else {
+            let selected_clone = self.selected.clone();
+            let mut father_index = &selected_clone[..self.selected.len() - 1];
+            let mut son_index = &selected_clone[..];
+
+            while !father_index.is_empty() {
+                if tree.num_children(father_index) - 1 > *son_index.last().unwrap() {
+                    self.selected = father_index.to_owned();
+                    self.selected.push(*son_index.last().unwrap() + 1);
+                    return;
+                }
+                son_index = father_index;
+                father_index = &father_index[..father_index.len() - 1];
+            }
+
+            if tree.num_children(&[]) - 1 > son_index[0] {
+                self.selected = vec![son_index[0] + 1];
+            }
+        }
+    }
+
+    pub fn key_left(&mut self) {
+        let selected = self.selected.clone();
+        if !self.close(&selected) {
+            self.selected.pop();
+        }
+    }
+
     pub fn key_right(&mut self) {
-        self.open(self.selected());
+        self.open(&self.selected.clone());
     }
 }
+pub use flatten::{flatten, Flattened};
+pub use identifier::{
+    TreeIdentifier, TreeIdentifierVec,
+};
 
 /// One item inside a [`Tree`]
 ///
-/// Can zero or more `children`.
+/// Can have zero or more `children`.
 ///
 /// # Example
 ///
@@ -480,7 +484,7 @@ impl<'a> StatefulWidget for Tree<'a> {
 
             let max_element_width = area.width.saturating_sub(after_depth_x - x);
             for (j, line) in item.item.text.lines.iter().enumerate() {
-                buf.set_spans(after_depth_x, y + j as u16, line, max_element_width);
+                buf.set_line(after_depth_x, y + j as u16, line, max_element_width);
             }
             if is_selected {
                 buf.set_style(area, self.highlight_style);

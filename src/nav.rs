@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tree_widget::{TreeState, TreeItem, Tree};
+use crate::tree_widget::{TreeState, TreeItem, Tree, TreeIdentifier, TreeView};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BookmarkLink {
@@ -71,7 +71,7 @@ impl NavNode {
         }
     }
 
-    fn get_node_from_id(&self, id: &[usize]) -> &NavNode {
+    fn get_node_from_id(&self, id: TreeIdentifier) -> &NavNode {
         if id.is_empty() {
             &self
         }
@@ -83,7 +83,7 @@ impl NavNode {
         }
     }
 
-    fn get_node_from_id_mut(&mut self, id: &[usize]) -> &mut NavNode {
+    fn get_node_from_id_mut(&mut self, id: TreeIdentifier) -> &mut NavNode {
         if id.is_empty() {
             self
         }
@@ -95,16 +95,51 @@ impl NavNode {
         }
     }
 
-    fn get_tree(&self) -> TreeItem {
-        if self.children.is_empty() {
-            TreeItem::new_leaf(self.string.as_str())
+    fn new_child(&mut self, node_id: TreeIdentifier) {
+        if node_id.is_empty() {
+            self.children.insert(0, NavNode::default());
+        } else {
+            self.children[node_id[0]].new_child(&node_id[1..]);
         }
-        else {
-            let children: Vec<_> = self.children.iter()
-                .map(|n| n.get_tree())
-                .collect();
+    }
 
-            TreeItem::new(self.string.as_str(), children)
+    fn new_sibling_above(&mut self, node_id: TreeIdentifier) {
+        if node_id.is_empty() {
+            panic!("Node ID cannot be empty");
+        } else if node_id.len() == 1 {
+            self.children.insert(node_id[0], NavNode::default());
+        } else {
+            self.children[node_id[0]].new_sibling_above(&node_id[1..]);
+        }
+    }
+
+    fn new_sibling_below(&mut self, node_id: TreeIdentifier) {
+        if node_id.is_empty() {
+            panic!("Node ID cannot be empty");
+        } else if node_id.len() == 1 {
+            self.children.insert(node_id[0] + 1, NavNode::default());
+        } else {
+            self.children[node_id[0]].new_sibling_above(&node_id[1..]);
+        }
+    }
+
+    fn delete_entry(&mut self, node_id: TreeIdentifier) {
+        if node_id.is_empty() {
+            panic!("Node ID cannot be empty");
+        } else if node_id.len() == 1 {
+            self.children.remove(node_id[0]);
+        } else {
+            self.children[node_id[0]].delete_entry(&node_id[1..]);
+        }
+    }
+}
+
+impl Default for NavNode {
+    fn default() -> Self {
+        Self { 
+            string: String::new(), 
+            link: BookmarkLink::PageNumber(0), 
+            children: Vec::new(),
         }
     }
 }
@@ -128,7 +163,7 @@ impl Nav {
     /// Render `self` to the `Frame` `f`, as a tree. Use `state` for persistence of open and
     /// selected nodes.
     pub fn ui<B: Backend>(&self, f: &mut Frame<B>, state: &mut TreeState) {
-        let tree = Tree::new(self.get_tree())
+        let tree = Tree::new(self)
             .highlight_style(
                 Style::default()
                     .fg(Color::Black)
@@ -137,22 +172,44 @@ impl Nav {
             .highlight_symbol("> ");
         f.render_stateful_widget(tree, f.size(), state);
     }
+}
 
-    /// Return a `Vec` representing the zeroth level nodes of `self`, as `TreeItem` for the tree
-    /// widget representation.
-    pub fn get_tree(&self) -> Vec<TreeItem> {
-        self.nodes.iter()
-                .map(|node| node.get_tree())
-                .collect()
+impl<'a> Into<TreeItem<'a>> for &'a NavNode {
+    fn into(self) -> TreeItem<'a> {
+        let children: Vec<_> = self.children
+            .iter()
+            .map(|child| Into::<TreeItem>::into(child))
+            .collect();
+        TreeItem::new(
+            self.string.as_str(), 
+            children,
+        )
     }
 }
 
-impl Index<&[usize]> for Nav {
+impl TreeView for Nav {
+    fn num_children(&self, index: TreeIdentifier) -> usize {
+        if index.is_empty() {
+            self.nodes.len()
+        } else {
+            self[index].children.len()
+        }
+    }
+}
+
+impl<'a> Into<Vec<TreeItem<'a>>> for &'a Nav {
+    fn into(self) -> Vec<TreeItem<'a>> {
+        self.nodes.iter()
+            .map(|child| child.into()).collect()
+    }
+}
+
+impl<'a> Index<TreeIdentifier<'a>> for Nav {
     type Output = NavNode;
 
-    fn index(&self, index: &[usize]) -> &Self::Output {
-        if index.len() == 0 {
-            panic!("Node ID cannot be empty!");
+    fn index(&self, index: TreeIdentifier) -> &Self::Output {
+        if index.is_empty() {
+            panic!("Trying to get node with empty index");
         }
         if index[0] >= self.nodes.len() {
             panic!("Node with ID does not exist");
@@ -161,10 +218,10 @@ impl Index<&[usize]> for Nav {
     }
 }
 
-impl IndexMut<&[usize]> for Nav {
-    fn index_mut(&mut self, index: &[usize]) -> &mut Self::Output {
-        if index.len() == 0 {
-            panic!("Node ID cannot be empty!");
+impl<'a> IndexMut<TreeIdentifier<'a>> for Nav {
+    fn index_mut(&mut self, index: TreeIdentifier) -> &mut Self::Output {
+        if index.is_empty() {
+            panic!("Trying to get node with empty index");
         }
         if index[0] >= self.nodes.len() {
             panic!("Node with ID does not exist");

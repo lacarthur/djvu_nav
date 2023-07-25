@@ -62,7 +62,8 @@ fn prepare_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, io::Error> {
 
 impl App {
     pub fn new(filename: &str) -> Result<Self, AppLifetimeError> {
-        let terminal = prepare_terminal().map_err(|e| AppLifetimeError::TerminalIOError(e))?;
+        let terminal = prepare_terminal()
+            .map_err(|e| AppLifetimeError::TerminalIOError(e))?;
 
         let nav = get_nav_from_djvu(filename)
             .map_err(|e| AppLifetimeError::NavReadingError(e))?;
@@ -145,13 +146,11 @@ impl App {
     }
 
     pub fn move_up(&mut self) {
-        let items = self.nav.get_tree();
-        self.tree_state.key_up(&items);
+        self.tree_state.key_up(&self.nav);
     }
 
     pub fn move_down(&mut self) {
-        let items = self.nav.get_tree();
-        self.tree_state.key_down(&items);
+        self.tree_state.key_down(&self.nav);
     }
 
     pub fn move_left(&mut self) {
@@ -200,6 +199,24 @@ impl App {
         embed_nav_in_djvu_file(&self.filename, &self.nav)?;
         Ok(())
     }
+
+    // fn add_new_entry_below(&mut self) {
+    //     let is_selected_open = self.tree_state.get_all_opened().contains(&self.tree_state.selected());
+    //     if is_selected_open {
+    //         self.nav.new_child(&self.tree_state.selected());
+    //     } else {
+    //         self.nav.new_sibling_below(&self.tree_state.selected());
+    //     }
+    // }
+
+    // fn add_new_entry_above(&mut self) {
+    //     self.nav.new_sibling_above(&self.tree_state.selected());
+    // }
+
+    // fn delete_selected_entry(&mut self) {
+    //     self.nav.delete_entry(&self.tree_state.selected());
+    //     // TODO : handle updating the state
+    // }
 }
 
 impl Drop for App {

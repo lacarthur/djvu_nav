@@ -1,12 +1,10 @@
 use nom::{
     IResult, Parser,
     multi::fold_many0,
-    bytes::complete::{tag, take_till},
-    sequence::delimited,
+    bytes::complete::tag,
+    sequence::{delimited, preceded},
     character::complete::{multispace0, u32},
     error::{ErrorKind, ParseError},
-    branch::alt,
-    combinator::map,
 };
 
 use crate::nav::{Nav, BookmarkLink, NavNode};
@@ -16,18 +14,11 @@ pub fn parse_djvu_nav(input: &str) -> IResult<&str, Nav> {
     if input.is_empty() {
         return Ok((input, Nav { nodes: vec![] }));
     }
+
     let (input, _) = tag("(bookmarks")(input)?;
-    let (input, nodes) = fold_many0(
-        delimited(
-            multispace0,
-            parse_nav_node,
-            multispace0
-        ), 
-        Vec::new, 
-        |mut acc, item| {
-            acc.push(item);
-            acc
-        })(input)?;
+
+    let (input, nodes) = parse_nav_nodes(input)?;
+
     let (input, _) = tag(")")(input)?;
     Ok((input, Nav { nodes }))
 }
@@ -36,7 +27,8 @@ pub fn parse_djvu_nav(input: &str) -> IResult<&str, Nav> {
 fn parse_string_with_escaped_characters(input: &str) -> IResult<&str, String> {
     let mut ret = String::new();
     let mut escape_next = false;
-    for (i, c) in input.chars().enumerate() {
+    let mut size_to_skip = 0;
+    for c in input.chars() {
         if escape_next {
             match c {
                 '"' => ret.push(c),
@@ -50,7 +42,7 @@ fn parse_string_with_escaped_characters(input: &str) -> IResult<&str, String> {
         }
         else {
             if c == '"' {
-                return Ok((&input[i..], ret));
+                return Ok((&input[size_to_skip..], ret));
             }
             else if c == '\\' {
                 escape_next = true;
@@ -59,6 +51,7 @@ fn parse_string_with_escaped_characters(input: &str) -> IResult<&str, String> {
                 ret.push(c);
             }
         }
+        size_to_skip += c.len_utf8();
     }
     Err(nom::Err::Failure(nom::error::Error {
         input,
@@ -67,31 +60,50 @@ fn parse_string_with_escaped_characters(input: &str) -> IResult<&str, String> {
 }
 
 fn parse_page_num(input: &str) -> IResult<&str, u32> {
-    quoted(hashtag_before(u32))(input)
+    preceded(tag("#"), u32)(input)
 }
 
 fn parse_bookmark_link(input: &str) -> IResult<&str, BookmarkLink> {
-    alt((
-        map(parse_page_num, |num| BookmarkLink::PageNumber(num)),
-        map(quoted(hashtag_before(take_till(|c| c== '"'))), |link| BookmarkLink::PageLink(String::from(link))) 
-    ))(input)
+    let (input, quoted_string) = parse_quoted_string(input)?;
+
+    if let Ok(("", page_num)) = parse_page_num(&quoted_string) {
+        Ok((input, BookmarkLink::PageNumber(page_num)))
+    } else if let Some('#') = quoted_string.chars().next() {
+        Ok((input, BookmarkLink::PageLink(String::from(&quoted_string[1..]))))
+    } else {
+        Err(nom::Err::Failure(nom::error::Error {
+            input,
+            code: ErrorKind::Tag,
+        }))
+    }
 }
 
 fn parse_quoted_string(input: &str) -> IResult<&str, String> {
     quoted(parse_string_with_escaped_characters)(input)
 }
 
-fn quoted<'a, O, F, E>(mut parser: F) -> impl FnMut(&'a str) -> IResult<&'a str, O, E> 
+fn quoted<'a, O, F, E>(parser: F) -> impl FnMut(&'a str) -> IResult<&'a str, O, E> 
 where
     F: Parser<&'a str, O, E>,
     E: ParseError<&'a str>
 {
-    move |input: &'a str| {
-        let (input, _) = tag("\"")(input)?;
-        let (input, ret) = parser.parse(input)?;
-        let (input, _) = tag("\"")(input)?;
-        Ok((input, ret))
-    }
+    delimited(tag("\""), parser, tag("\""))
+}
+
+fn parse_nav_nodes(input: &str) -> IResult<&str, Vec<NavNode>> {
+    let (input, children) = fold_many0(
+        delimited(
+            multispace0, 
+            parse_nav_node,
+            multispace0,
+        ), 
+        Vec::new,
+        |mut acc: Vec<_>, item| {
+            acc.push(item);
+            acc
+        })(input)?;
+
+    Ok((input, children))
 }
 
 fn parse_nav_node(input: &str) -> IResult<&str, NavNode> {
@@ -101,30 +113,9 @@ fn parse_nav_node(input: &str) -> IResult<&str, NavNode> {
 fn parse_node_interior(input: &str) -> IResult<&str, NavNode> {
     let (input, name) = delimited(multispace0, parse_quoted_string, multispace0)(input)?;
     let (input, link) = delimited(multispace0, parse_bookmark_link, multispace0)(input)?;
-    let (input, children) = fold_many0(
-        delimited(
-            multispace0,
-            parse_nav_node, 
-            multispace0
-        ),
-        Vec::new, 
-        |mut acc: Vec<_>, item| {
-            acc.push(item); 
-            acc
-    })(input)?;
+    let (input, children) = parse_nav_nodes(input)?;
 
     Ok((input, NavNode { string: name, link, children }))
-}
-
-fn hashtag_before<'a, O, F, E>(mut parser: F) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
-where
-    F: Parser<&'a str, O, E>,
-    E: ParseError<&'a str>
-{
-    move |input: &'a str| {
-        let (input, _) = tag("#")(input)?;
-        parser.parse(input)
-    }
 }
 
 #[cfg(test)]
@@ -133,7 +124,7 @@ mod tests {
     #[test]
     fn page_number() {
         assert_eq!(
-            parse_page_num("\"#756\"").unwrap(),
+            parse_page_num("#756").unwrap(),
             ("", 756)
         );
     }
@@ -159,6 +150,14 @@ mod tests {
         assert_eq!(
             parse_quoted_string("\"test test\"").unwrap(),
             ("", String::from("test test"))
+        )
+    }
+
+    #[test]
+    fn quoted_string() {
+        assert_eq!(
+            parse_quoted_string(r##""test\\n\\n\\n\"hh\" jlkj""##).unwrap(),
+            ("", String::from(r##"test\n\n\n"hh" jlkj"##))
         )
     }
 
@@ -282,6 +281,18 @@ mod tests {
                      }
                  ]
              })
+        )
+    }
+
+    #[test]
+    fn nav_node_utf8() {
+        assert_eq!(
+            parse_nav_node("(\"4.2 CONVEXITY—ALGEBRAIC\" \"#90\" )").unwrap().1,
+            NavNode {
+                string: "4.2 CONVEXITY—ALGEBRAIC".to_string(),
+                link: BookmarkLink::PageNumber(90),
+                children: vec![],
+            }
         )
     }
 }
