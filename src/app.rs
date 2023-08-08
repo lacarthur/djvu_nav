@@ -15,7 +15,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::{
     nav::{Nav, BookmarkLink}, 
-    tree_widget::TreeState, 
+    tree_widget::{TreeState, TreeView}, 
     djvu::{NavReadingError, get_nav_from_djvu, embed_nav_in_djvu_file}
 };
 
@@ -95,14 +95,19 @@ impl App {
             KeyCode::Char('j') => self.move_down(),
             KeyCode::Char('k') => self.move_up(),
             KeyCode::Char('l') => self.move_right(),
-            KeyCode::Char('a') => self.edit_currently_selected()?,
+            KeyCode::Char('i') => self.edit_currently_selected()?,
             KeyCode::Char('w') => self.write().map_err(|e| AppLifetimeError::NavReadingError(e))?,
+            KeyCode::Char('o') => self.add_new_entry_below(),
+            KeyCode::Char('d') => self.delete_currently_selected(),
             _ => (),
         }
         Ok(())
     }
 
     fn edit_currently_selected(&mut self) -> Result<(), AppLifetimeError> {
+        if self.tree_state.selected().is_empty() {
+            return Ok(());
+        }
         // Create temp file with data in it
         fs::create_dir_all(TEMP_FOLDER).map_err(|e| AppLifetimeError::TerminalIOError(e))?;
         let temp_filename = format!("{}/{}", TEMP_FOLDER, TEMP_FILE_NAME);
@@ -143,6 +148,26 @@ impl App {
         self.nav[currently_selected_id].link = BookmarkLink::from_string(&lines[1]);
 
         Ok(())
+    }
+
+    fn delete_currently_selected(&mut self) {
+        if self.tree_state.selected().is_empty() {
+            return;
+        }
+
+        let selected = self.tree_state.selected().to_owned();
+        let father = &selected[..selected.len() - 1];
+        let last = selected[selected.len() - 1];
+
+        if last == 0 && self.nav.num_children(father) == 1 {
+            self.tree_state.select(father);
+        } else if last == self.nav.num_children(father) - 1 {
+            let mut new_select = father.to_owned();
+            new_select.push(last - 1);
+            self.tree_state.select(new_select);
+        }
+
+        self.nav.delete_entry(&selected);
     }
 
     pub fn move_up(&mut self) {
@@ -200,18 +225,16 @@ impl App {
         Ok(())
     }
 
-    // fn add_new_entry_below(&mut self) {
-    //     let is_selected_open = self.tree_state.get_all_opened().contains(&self.tree_state.selected());
-    //     if is_selected_open {
-    //         self.nav.new_child(&self.tree_state.selected());
-    //     } else {
-    //         self.nav.new_sibling_below(&self.tree_state.selected());
-    //     }
-    // }
+    fn add_new_entry_below(&mut self) {
+        let is_selected_open = self.tree_state.is_open(self.tree_state.selected());
+        if is_selected_open {
+            self.nav.new_first_child(&self.tree_state.selected());
+        } else {
+            self.nav.new_sibling_below(&self.tree_state.selected());
+        }
 
-    // fn add_new_entry_above(&mut self) {
-    //     self.nav.new_sibling_above(&self.tree_state.selected());
-    // }
+        self.move_down();
+    }
 
     // fn delete_selected_entry(&mut self) {
     //     self.nav.delete_entry(&self.tree_state.selected());

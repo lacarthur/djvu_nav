@@ -172,6 +172,39 @@ impl Nav {
             .highlight_symbol("> ");
         f.render_stateful_widget(tree, f.size(), state);
     }
+
+    pub fn new_first_child(&mut self, index: TreeIdentifier) {
+        if index.is_empty() {
+            self.nodes.insert(0,NavNode::default());
+        } else {
+            self[index].children.insert(0, NavNode::default());
+        }
+    }
+
+    pub fn new_sibling_below(&mut self, index: TreeIdentifier) {
+        let father = &index[..index.len() - 1];
+        if father.is_empty() {
+            self.nodes.insert(index[0] + 1, NavNode::default());
+        } else {
+            self[father].children.insert(index.last().unwrap() + 1, NavNode::default());
+        }
+    }
+
+    pub fn delete_entry(&mut self, index: TreeIdentifier) {
+        if index.is_empty() {
+            return;
+        }
+
+        let father = &index[..index.len() - 1];
+        let last = index[index.len() - 1];
+
+        if father.is_empty() {
+            self.nodes.remove(last);
+        }
+        else {
+            self[father].children.remove(last);
+        }
+    }
 }
 
 impl<'a> Into<TreeItem<'a>> for &'a NavNode {
