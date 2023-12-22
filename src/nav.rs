@@ -1,7 +1,6 @@
 use std::{fmt::Display, ops::{Index, IndexMut}};
 
 use ratatui::{
-    backend::Backend,
     style::{Style, Color},
     Frame,
 };
@@ -162,7 +161,7 @@ impl Nav {
 
     /// Render `self` to the `Frame` `f`, as a tree. Use `state` for persistence of open and
     /// selected nodes.
-    pub fn ui<B: Backend>(&self, f: &mut Frame<B>, state: &mut TreeState) {
+    pub fn ui(&self, f: &mut Frame, state: &mut TreeState) {
         let tree = Tree::new(self)
             .highlight_style(
                 Style::default()
