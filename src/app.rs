@@ -1,8 +1,8 @@
 use std::{
-    fs::{self, File}, 
+    fs::File, 
     io::{BufWriter, Write, BufReader, BufRead, self, Stdout}, 
     process::Command, 
-    time::{Duration, Instant}
+    time::{Duration, Instant}, path::PathBuf
 };
 
 use crossterm::{
@@ -19,13 +19,17 @@ use crate::{
     djvu::{NavReadingError, get_nav_from_djvu, embed_nav_in_djvu_file}
 };
 
-const TEMP_FOLDER: &str = "/home/arthur/.cache/djvu_nav";
+const APP_NAME: &str = "nav_edit";
 const TEMP_FILE_NAME: &str = "tempfile";
 
 const EDITOR: &str = "nvim";
 
-pub fn get_temp_file_name() -> String {
-    format!("{}/{}", TEMP_FOLDER, TEMP_FILE_NAME)
+pub fn get_temp_file_name() -> Result<PathBuf, TempFileError> {
+    let xdg_dirs = xdg::BaseDirectories::with_prefix(format!("{}", APP_NAME))
+        .map_err(|e| TempFileError::XDGSpecificError(e))?;
+    // this does not create the cache file, but it creates the directories necessary to create it.
+    xdg_dirs.place_cache_file(TEMP_FILE_NAME)
+        .map_err(|e| TempFileError::SystemIOError(e))
 }
 
 pub struct App {
@@ -37,11 +41,17 @@ pub struct App {
 }
 
 #[derive(Debug)]
+pub enum TempFileError {
+    SystemIOError(io::Error),
+    XDGSpecificError(xdg::BaseDirectoriesError),
+}
+
+#[derive(Debug)]
 pub enum AppLifetimeError {
     NavReadingError(NavReadingError),
     ExternalProgramError(io::Error),
     TerminalIOError(io::Error),
-    TempFileIOError(io::Error),
+    TempFileError(TempFileError),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -109,18 +119,17 @@ impl App {
             return Ok(());
         }
         // Create temp file with data in it
-        fs::create_dir_all(TEMP_FOLDER).map_err(|e| AppLifetimeError::TerminalIOError(e))?;
-        let temp_filename = format!("{}/{}", TEMP_FOLDER, TEMP_FILE_NAME);
+        let temp_filename = get_temp_file_name().map_err(|e| AppLifetimeError::TempFileError(e))?;
         let currently_selected_id = &self.tree_state.selected();
         {
             let f = File::create(&temp_filename)
-                .map_err(|e| AppLifetimeError::TempFileIOError(e))?;
+                .map_err(|e| AppLifetimeError::TempFileError(TempFileError::SystemIOError(e)))?;
             let mut writer = BufWriter::new(f);
 
             let current_node = &self.nav[currently_selected_id];
 
             writer.write_fmt(format_args!("{}\n{}", current_node.string, current_node.link))
-                .map_err(|e| AppLifetimeError::TempFileIOError(e))?;
+                .map_err(|e| AppLifetimeError::TempFileError(TempFileError::SystemIOError(e)))?;
         }
 
         // Edit file with EDITOR
@@ -138,7 +147,8 @@ impl App {
             .map_err(|e| AppLifetimeError::TerminalIOError(e))?;
         self.terminal.clear().map_err(|e| AppLifetimeError::TerminalIOError(e))?;
 
-        let tempfile = File::open(&temp_filename).map_err(|e| AppLifetimeError::TempFileIOError(e))?;
+        let tempfile = File::open(&temp_filename)
+            .map_err(|e| AppLifetimeError::TempFileError(TempFileError::SystemIOError(e)))?;
         let reader = BufReader::new(tempfile);
         let lines: Vec<String> = reader.lines()
             .map(|result| result.unwrap())

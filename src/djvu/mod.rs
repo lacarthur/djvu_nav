@@ -1,7 +1,7 @@
 use std::{
     process::Command,
     fs::File, 
-    io::{BufWriter, Write},
+    io::{BufWriter, Write}, path::PathBuf,
 };
 
 use crate::{
@@ -37,10 +37,10 @@ pub fn get_nav_from_djvu(filename: &str) -> Result<Nav, NavReadingError> {
 }
 
 /// Write `nav` to a temp file so that it can be used by `djvused` later on.
-fn write_nav_to_temp_file(filename: &str, nav: &Nav) -> Result<(), std::io::Error> {
+fn write_nav_to_temp_file(path: &PathBuf, nav: &Nav) -> Result<(), std::io::Error> {
     let nav_s = nav.to_djvu();
 
-    let temp_file = File::create(filename)?;
+    let temp_file = File::create(path)?;
     let mut writer = BufWriter::new(temp_file);
     write!(writer, "{}", nav_s)?;
     Ok(())
@@ -48,10 +48,10 @@ fn write_nav_to_temp_file(filename: &str, nav: &Nav) -> Result<(), std::io::Erro
 
 /// Uses `djvused` to set the outline of the file `filename` to `nav`.
 pub fn embed_nav_in_djvu_file(filename: &str, nav: &Nav) -> Result<(), NavReadingError> {
-    let temp_file_name = get_temp_file_name();
+    let temp_file_name = get_temp_file_name().unwrap();
     write_nav_to_temp_file(&temp_file_name, nav).map_err(|e| NavReadingError::IOError(e))?;
 
-    let sed_command = format!("set-outline {}", &temp_file_name);
+    let sed_command = format!("set-outline {}", temp_file_name.into_os_string().into_string().unwrap());
     let command_result = Command::new("djvused")
         .args([filename, "-e", &sed_command, "-s", "-v"])
         .output()
