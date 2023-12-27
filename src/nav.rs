@@ -93,44 +93,6 @@ impl NavNode {
             self.children[id[0]].get_node_from_id_mut(&id[1..])
         }
     }
-
-    fn new_child(&mut self, node_id: TreeIdentifier) {
-        if node_id.is_empty() {
-            self.children.insert(0, NavNode::default());
-        } else {
-            self.children[node_id[0]].new_child(&node_id[1..]);
-        }
-    }
-
-    fn new_sibling_above(&mut self, node_id: TreeIdentifier) {
-        if node_id.is_empty() {
-            panic!("Node ID cannot be empty");
-        } else if node_id.len() == 1 {
-            self.children.insert(node_id[0], NavNode::default());
-        } else {
-            self.children[node_id[0]].new_sibling_above(&node_id[1..]);
-        }
-    }
-
-    fn new_sibling_below(&mut self, node_id: TreeIdentifier) {
-        if node_id.is_empty() {
-            panic!("Node ID cannot be empty");
-        } else if node_id.len() == 1 {
-            self.children.insert(node_id[0] + 1, NavNode::default());
-        } else {
-            self.children[node_id[0]].new_sibling_above(&node_id[1..]);
-        }
-    }
-
-    fn delete_entry(&mut self, node_id: TreeIdentifier) {
-        if node_id.is_empty() {
-            panic!("Node ID cannot be empty");
-        } else if node_id.len() == 1 {
-            self.children.remove(node_id[0]);
-        } else {
-            self.children[node_id[0]].delete_entry(&node_id[1..]);
-        }
-    }
 }
 
 impl Default for NavNode {
